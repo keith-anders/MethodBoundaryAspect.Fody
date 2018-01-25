@@ -100,3 +100,43 @@ namespace Catel.Fody
         }
     }
 }
+
+namespace MethodBoundaryAspect.Fody
+{
+    using System;
+    using System.Collections.Generic;
+    using System.Text;
+    using Mono.Cecil;
+    using Mono.Cecil.Cil;
+
+    public static class CecilExtensions
+    {
+
+        public static OpCode GetStElemCode(this MetadataType type)
+        {
+            switch (type)
+            {
+                case MetadataType.Boolean:
+                case MetadataType.Int32:
+                case MetadataType.UInt32:
+                    return OpCodes.Stelem_I4;
+                case MetadataType.Byte:
+                case MetadataType.SByte:
+                    return OpCodes.Stelem_I1;
+                case MetadataType.Char:
+                case MetadataType.Int16:
+                case MetadataType.UInt16:
+                    return OpCodes.Stelem_I2;
+                case MetadataType.Double:
+                    return OpCodes.Stelem_R8;
+                case MetadataType.Int64:
+                case MetadataType.UInt64:
+                    return OpCodes.Stelem_I8;
+                case MetadataType.Single:
+                    return OpCodes.Stelem_R4;
+                default:
+                    return OpCodes.Stelem_Ref;
+            }
+        }
+    }
+}
