@@ -14,9 +14,9 @@ namespace MethodBoundaryAspect.Fody.UnitTests
     {
         static readonly Type TestClassType = typeof(ValidatableDerivedClass);
 
-        bool WasCalled()
+        int WasCalled()
         {
-            return (bool)AssemblyLoader.InvokeMethod(typeof(ValidatableAspect).FullName, nameof(ValidatableAspect.WasCalled));
+            return (int)AssemblyLoader.InvokeMethod(typeof(ValidatableAspect).FullName, nameof(ValidatableAspect.TimesCalled));
         }
 
         void Weave()
@@ -36,7 +36,7 @@ namespace MethodBoundaryAspect.Fody.UnitTests
             var result = WasCalled();
 
             // Assert
-            result.Should().Be(true);
+            result.Should().Be(1);
         }
 
         [Fact]
@@ -51,7 +51,7 @@ namespace MethodBoundaryAspect.Fody.UnitTests
             var result = WasCalled();
 
             // Assert
-            result.Should().Be(true);
+            result.Should().Be(1);
         }
 
         [Fact]
@@ -66,7 +66,7 @@ namespace MethodBoundaryAspect.Fody.UnitTests
             var result = WasCalled();
 
             // Assert
-            result.Should().Be(false);
+            result.Should().Be(0);
         }
 
         [Fact]
@@ -81,7 +81,7 @@ namespace MethodBoundaryAspect.Fody.UnitTests
             var result = WasCalled();
 
             // Assert
-            result.Should().Be(false);
+            result.Should().Be(0);
         }
 
         [Fact]
@@ -96,7 +96,7 @@ namespace MethodBoundaryAspect.Fody.UnitTests
             var result = WasCalled();
 
             // Assert
-            result.Should().Be(false);
+            result.Should().Be(0);
         }
     }
 }
