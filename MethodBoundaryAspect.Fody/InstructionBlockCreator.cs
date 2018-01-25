@@ -558,5 +558,47 @@ namespace MethodBoundaryAspect.Fody
         {
             return type.Name == VoidType;
         }
+
+        public FieldDefinition StoreMethodInfoInStaticField(MethodReference method)
+        {
+            var typeDef = _typeBeingWoven.Resolve();
+            int i;
+            for (i = 1; typeDef.Fields.FirstOrDefault(f => f.Name == $"<{method.Name}>k_methodField_{i}") != null; ++i)
+            { }
+
+            var field = new FieldDefinition($"<{method.Name}>k_methodField_{i}", FieldAttributes.Static | FieldAttributes.Private,
+                _referenceFinder.GetTypeReference(typeof(System.Reflection.MethodInfo)));
+
+            var staticCtor = EnsureStaticConstructor(typeDef);
+
+            var processor = staticCtor.Body.GetILProcessor();
+            var first = staticCtor.Body.Instructions.First();
+            
+            var getMethodFromHandle = _referenceFinder.GetMethodReference(typeof(System.Reflection.MethodBase), md => md.Name == "GetMethodFromHandle" && md.Parameters.Count == 2);
+            processor.InsertBefore(first, Instruction.Create(OpCodes.Ldtoken, method));
+            processor.InsertBefore(first, Instruction.Create(OpCodes.Ldtoken, _typeBeingWoven));
+            processor.InsertBefore(first, Instruction.Create(OpCodes.Call, getMethodFromHandle));
+            processor.InsertBefore(first, Instruction.Create(OpCodes.Castclass, _referenceFinder.GetTypeReference(typeof(System.Reflection.MethodInfo))));
+            processor.InsertBefore(first, Instruction.Create(OpCodes.Stsfld, field));
+
+            typeDef.Fields.Add(field);
+
+            return field.Resolve();
+        }
+
+        public MethodDefinition EnsureStaticConstructor(TypeDefinition type)
+        {
+            var staticCtor = type.GetStaticConstructor();
+            if (staticCtor == null)
+            {
+                var voidRef = type.Module.TypeSystem.Void;
+                staticCtor = new MethodDefinition(".cctor", MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName | MethodAttributes.Static, voidRef);
+                var il = staticCtor.Body.GetILProcessor();
+                il.Emit(OpCodes.Ret);
+                type.Methods.Add(staticCtor);
+            }
+            staticCtor.Body.InitLocals = true;
+            return staticCtor;
+        }
     }
 }

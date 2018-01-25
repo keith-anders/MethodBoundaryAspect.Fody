@@ -122,7 +122,7 @@ namespace MethodBoundaryAspect.Fody
             var createMethodExecutionArgsInstance = creator.CreateMethodExecutionArgsInstance(_createArgumentsArray);
             _methodBodyChanger.AddCreateMethodExecutionArgs(createMethodExecutionArgsInstance);
 
-            var createAspectInstance = creator.CreateAspectInstance(aspect);
+            var createAspectInstance = creator.LoadAspectInstance(aspect, _typeBeingWoven);
             if (overriddenAspectMethods.HasFlag(AspectMethods.OnEntry))
             {
                 var callAspectOnEntry = creator.CallAspectOnEntry(createAspectInstance,
