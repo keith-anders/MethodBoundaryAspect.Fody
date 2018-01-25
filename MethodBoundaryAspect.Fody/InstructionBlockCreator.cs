@@ -263,10 +263,14 @@ namespace MethodBoundaryAspect.Fody
                 methodReference);
 
             Instruction assignReturnValueToVariableInstruction = null;
+            Instruction castReturnValueToCorrectType = null;
             if (returnValue != null)
             {
                 if (IsVoid(methodDefinition.ReturnType))
                     throw new InvalidOperationException("Method has no return value");
+                
+                if (!_referenceFinder.Module.ImportReference(methodDefinition.ReturnType).IsAssignableTo(_referenceFinder.Module.ImportReference(returnValue.VariableType)))
+                    castReturnValueToCorrectType = _processor.Create(OpCodes.Unbox_Any, returnValue.VariableType);
 
                 assignReturnValueToVariableInstruction = _processor.Create(OpCodes.Stloc, returnValue);
             }
@@ -276,6 +280,8 @@ namespace MethodBoundaryAspect.Fody
                 instructions.Add(loadVariableInstruction);
             instructions.AddRange(loadArgumentsInstructions);
             instructions.Add(methodCallInstruction);
+            if (castReturnValueToCorrectType != null)
+                instructions.Add(castReturnValueToCorrectType);
             if (assignReturnValueToVariableInstruction != null)
                 instructions.Add(assignReturnValueToVariableInstruction);
             return instructions;

@@ -111,6 +111,14 @@ namespace MethodBoundaryAspect.Fody
 
     public static class CecilExtensions
     {
+        public static bool IsAssignableTo(this TypeReference root, TypeReference other)
+        {
+            for (TypeDefinition t = other.Resolve(); t != null && t.FullName != typeof(Object).FullName; t = t.BaseType?.Resolve())
+                if (t.FullName == root.FullName)
+                    return true;
+            return false;
+        }
+
 
         public static OpCode GetStElemCode(this MetadataType type)
         {
