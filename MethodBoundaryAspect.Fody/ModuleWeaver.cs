@@ -1,14 +1,16 @@
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using MethodBoundaryAspect.Fody.Attributes;
 using MethodBoundaryAspect.Fody.Ordering;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Cecil.Pdb;
 using Mono.Collections.Generic;
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using Assembly = System.Reflection.Assembly;
 
 namespace MethodBoundaryAspect.Fody
 {
@@ -55,11 +57,15 @@ namespace MethodBoundaryAspect.Fody
         public int TotalWeavedTypes { get; private set; }
         public int TotalWeavedMethods { get; private set; }
         public int TotalWeavedPropertyMethods { get; private set; }
+        public byte[] UnweavedAssembly { get; private set; }
 
         public MethodDefinition LastWeavedMethod { get; private set; }
 
+        public List<string> ReferenceCopyLocalPaths { get; set; }
+
         public void Execute()
         {
+            UnweavedAssembly = File.ReadAllBytes(ModuleDefinition.FileName);
             Execute(ModuleDefinition);
         }
 
@@ -95,24 +101,25 @@ namespace MethodBoundaryAspect.Fody
             {
                 ReadSymbols = true,
                 SymbolReaderProvider = new PdbReaderProvider(),
-				ReadWrite = true,
+                ReadWrite = true,
             };
 
-            if (AdditionalAssemblyResolveFolders.Any())
-                readerParameters.AssemblyResolver = new FolderAssemblyResolver(AdditionalAssemblyResolveFolders);
+            readerParameters.AssemblyResolver = new FolderAssemblyResolver(AdditionalAssemblyResolveFolders
+                .Concat(new string[] { Directory.GetParent(assemblyPath).FullName }).ToList());
 
-			using (var assemblyDefinition = AssemblyDefinition.ReadAssembly(assemblyPath, readerParameters))
-			{
-				var module = assemblyDefinition.MainModule;
-				Execute(module);
+            UnweavedAssembly = File.ReadAllBytes(assemblyPath);
+            using (var assemblyDefinition = AssemblyDefinition.ReadAssembly(assemblyPath, readerParameters))
+            {
+                var module = assemblyDefinition.MainModule;
+                Execute(module);
 
-				var writerParameters = new WriterParameters
-				{
-					WriteSymbols = true,
-					SymbolWriterProvider = new PdbWriterProvider()
-				};
-				assemblyDefinition.Write(writerParameters);
-			}
+                var writerParameters = new WriterParameters
+                {
+                    WriteSymbols = true,
+                    SymbolWriterProvider = new PdbWriterProvider()
+                };
+                assemblyDefinition.Write(writerParameters);
+            }
         }
 
         public void AddClassFilter(string classFilter)
@@ -144,12 +151,70 @@ namespace MethodBoundaryAspect.Fody
             LogErrorPoint = (m, p) => { };
         }
 
+        private Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
+        {
+            return AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.FullName == args.Name);
+        }
+
+        Assembly LoadAssembly(ModuleDefinition moduleDefinition, byte[] assemblyBytes, List<string> referencePaths)
+        {
+            HashSet<string> loaded = new HashSet<string>();
+            Assembly LoadAssembly(byte[] bytes)
+            {
+                var asm = AppDomain.CurrentDomain.Load(bytes);
+                foreach (var dependent in asm.GetReferencedAssemblies())
+                    if (!loaded.Contains(dependent.FullName))
+                    {
+                        var referencePath = referencePaths.FirstOrDefault(p => new FileInfo(p).Name == dependent.Name + ".dll");
+                        loaded.Add(dependent.FullName);
+                        if (referencePath == null)
+                            AppDomain.CurrentDomain.Load(dependent);
+                        else
+                            LoadAssembly(File.ReadAllBytes(referencePath));
+                    }
+                return asm;
+            }
+
+            return LoadAssembly(assemblyBytes);
+        }
+
+        Assembly UnweavedLoadedAssembly;
+
         private void Execute(ModuleDefinition module)
         {
-            var assemblyMethodBoundaryAspects = module.Assembly.CustomAttributes;
+            try
+            {
+                AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
+                var assemblyMethodBoundaryAspects = module.Assembly.CustomAttributes;
+                UnweavedLoadedAssembly = LoadAssembly(module, UnweavedAssembly, ReferenceCopyLocalPaths ?? new List<string>());
 
-            foreach (var type in module.Types)
-                WeaveType(module, type, assemblyMethodBoundaryAspects);
+                foreach (var type in module.Types)
+                    WeaveType(module, type, assemblyMethodBoundaryAspects);
+            }
+            catch (Exception e)
+            {
+                LogError(ToDetailedString(e));
+                throw;
+            }
+            finally
+            {
+                AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
+            }
+        }
+
+        static string ToDetailedString(Exception e)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine($"{e.GetType().FullName} - {e.Message}");
+            sb.AppendLine();
+            sb.AppendLine(e.StackTrace);
+
+            if (e.InnerException != null)
+            {
+                sb.AppendLine("---Inner Exception---");
+                sb.AppendLine(ToDetailedString(e.InnerException));
+            }
+            return sb.ToString();
         }
 
         private void WeaveType(ModuleDefinition module, TypeDefinition type, Collection<CustomAttribute> assemblyMethodBoundaryAspects)
@@ -165,9 +230,9 @@ namespace MethodBoundaryAspect.Fody
                 .ToDictionary(x => x.SetMethod);
 
             var weavedAtLeastOneMethod = false;
-            foreach (var method in type.Methods)
+            foreach (var method in type.Methods.ToList())
             {
-                if (!IsWeavableMethod(method))
+                if (!IsWeavableMethod(method, type))
                     continue;
 
                 Collection<CustomAttribute> methodMethodBoundaryAspects;
@@ -188,25 +253,27 @@ namespace MethodBoundaryAspect.Fody
                 if (aspectInfos.Count == 0)
                     continue;
 
-                weavedAtLeastOneMethod = WeaveMethod(
+                weavedAtLeastOneMethod |= WeaveMethod(
                     module,
                     method,
-                    aspectInfos);
-            }   
+                    aspectInfos,
+                    type);
+            }
 
             if (weavedAtLeastOneMethod)
                 TotalWeavedTypes++;
         }
 
         private bool WeaveMethod(
-            ModuleDefinition module, 
+            ModuleDefinition module,
             MethodDefinition method,
-            List<AspectInfo> aspectInfos)
+            List<AspectInfo> aspectInfos,
+            TypeReference type)
         {
             aspectInfos = AspectOrderer.Order(aspectInfos);
             aspectInfos.Reverse(); // last aspect has to be weaved in first
 
-            using (var methodWeaver = new MethodWeaver())
+            using (var methodWeaver = new MethodWeaver(module, type, method, UnweavedLoadedAssembly))
             {
                 foreach (var aspectInfo in aspectInfos)
                 {
@@ -225,9 +292,7 @@ namespace MethodBoundaryAspect.Fody
                     if (overriddenAspectMethods == AspectMethods.None)
                         continue;
 
-                    
-
-                    methodWeaver.Weave(method, aspectInfo.AspectAttribute, overriddenAspectMethods, module);
+                    methodWeaver.Weave(aspectInfo.AspectAttribute, overriddenAspectMethods);
                 }
 
                 if (methodWeaver.WeaveCounter == 0)
@@ -272,6 +337,8 @@ namespace MethodBoundaryAspect.Fody
                 aspectMethods |= AspectMethods.OnExit;
             if (overloadedMethods.ContainsKey("OnException"))
                 aspectMethods |= AspectMethods.OnException;
+            if (overloadedMethods.ContainsKey(nameof(OnMethodBoundaryAspect.CompileTimeValidate)))
+                aspectMethods |= AspectMethods.CompileTimeValidate;
             return aspectMethods;
         }
 
@@ -283,7 +350,8 @@ namespace MethodBoundaryAspect.Fody
                 if (currentType.FullName == typeof(OnMethodBoundaryAspect).FullName)
                     return true;
 
-                currentType = currentType.Resolve().BaseType;
+                var typeDef = currentType.Resolve();
+                currentType = typeDef.BaseType;
             } while (currentType != null);
 
             return false;
@@ -294,7 +362,7 @@ namespace MethodBoundaryAspect.Fody
             return IsMethodBoundaryAspect(customAttribute.AttributeType.Resolve());
         }
 
-        private bool IsWeavableMethod(MethodDefinition method)
+        private bool IsWeavableMethod(MethodDefinition method, TypeReference type)
         {
             var fullName = method.DeclaringType.FullName;
             var name = method.Name;
@@ -302,7 +370,7 @@ namespace MethodBoundaryAspect.Fody
             if (IsIgnoredByWeaving(method))
                 return false;
 
-            if (IsUserFiltered(fullName, name))
+            if (IsUserFiltered(fullName, name, type))
                 return false;
 
             return !(method.IsAbstract // abstract or interface method
@@ -311,13 +379,12 @@ namespace MethodBoundaryAspect.Fody
                      || method.IsPInvokeImpl); // extern
         }
 
-        private bool IsUserFiltered(string fullName, string name)
+        private bool IsUserFiltered(string fullName, string name, TypeReference type)
         {
             if (_classFilters.Any())
             {
                 var classFullName = fullName;
-                var matched = _classFilters.Contains(classFullName);
-                if (!matched)
+                if (!_classFilters.Contains(classFullName) && !_classFilters.Contains(type.FullName))
                     return true;
             }
 

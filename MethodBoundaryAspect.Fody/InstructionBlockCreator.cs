@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
+using Mono.Cecil.Rocks;
 
 namespace MethodBoundaryAspect.Fody
 {
@@ -12,13 +13,15 @@ namespace MethodBoundaryAspect.Fody
 
         private readonly MethodDefinition _method;
         private readonly ReferenceFinder _referenceFinder;
+        private readonly TypeReference _typeBeingWoven;
 
         private readonly ILProcessor _processor;
 
-        public InstructionBlockCreator(MethodDefinition method, ReferenceFinder referenceFinder)
+        public InstructionBlockCreator(MethodDefinition method, ReferenceFinder referenceFinder, TypeReference typeBeingWoven)
         {
             _method = method;
             _referenceFinder = referenceFinder;
+            _typeBeingWoven = typeBeingWoven;
             _processor = _method.Body.GetILProcessor();
         }
 

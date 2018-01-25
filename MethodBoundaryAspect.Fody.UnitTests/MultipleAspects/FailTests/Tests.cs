@@ -18,10 +18,10 @@ namespace MethodBoundaryAspect.Fody.UnitTests.MultipleAspects.FailTests
             weaver.AddMethodFilter(_testType.FullName + ".VoidEmptyMethod");
 
             // Act
-            Action call = () => weaver.Weave(Weave.DllPath);
+            void call() => weaver.Weave(Weave.DllPath);
 
             // Arrange
-            call.ShouldThrow<InvalidAspectConfigurationException>();
+            ((Action)call).ShouldThrow<InvalidAspectConfigurationException>();
         }
 
         [Fact]
