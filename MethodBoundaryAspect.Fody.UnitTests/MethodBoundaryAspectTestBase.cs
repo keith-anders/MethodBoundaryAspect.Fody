@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using FluentAssertions;
 using MethodBoundaryAspect.Fody.UnitTests.Unified;
 
@@ -65,6 +66,7 @@ namespace MethodBoundaryAspect.Fody.UnitTests
         protected void WeaveAssemblyAndLoad(string assemblyPath)
         {
             Weaver = new ModuleWeaver();
+            SetLocalPaths(Weaver, assemblyPath);
 
             WeavedAssemblyPath = assemblyPath;
             Weaver.Weave(assemblyPath);
@@ -95,9 +97,21 @@ namespace MethodBoundaryAspect.Fody.UnitTests
             LoadWeavedAssembly();
         }
 
+        static void SetLocalPaths(ModuleWeaver weaver, string assemblyPath)
+        {
+            var directory = new FileInfo(assemblyPath).Directory;
+            weaver.ReferenceCopyLocalPaths = 
+                directory.GetFiles("*.dll")
+                .Concat(directory.GetFiles("*.exe"))
+                .Select(p => p.FullName)
+                .Except(new[] { assemblyPath })
+                .ToList();
+        }
+
         private static void WeaveAssembly(Type type, ModuleWeaver weaver)
         {
             var normalizedPath = type.Assembly.CodeBase.Replace(@"file:///", string.Empty);
+            SetLocalPaths(weaver, normalizedPath);
             WeavedAssemblyPath = weaver.WeaveToShadowFile(normalizedPath);
         }
 

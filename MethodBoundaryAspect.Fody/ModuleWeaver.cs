@@ -1,14 +1,14 @@
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using MethodBoundaryAspect.Fody.Attributes;
 using MethodBoundaryAspect.Fody.Ordering;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Cecil.Pdb;
 using Mono.Collections.Generic;
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
 
 namespace MethodBoundaryAspect.Fody
 {
@@ -59,6 +59,8 @@ namespace MethodBoundaryAspect.Fody
 
         public MethodDefinition LastWeavedMethod { get; private set; }
 
+        public List<string> ReferenceCopyLocalPaths { get; set; }
+
         public void Execute()
         {
             UnweavedAssembly = File.ReadAllBytes(ModuleDefinition.FileName);
@@ -97,25 +99,25 @@ namespace MethodBoundaryAspect.Fody
             {
                 ReadSymbols = true,
                 SymbolReaderProvider = new PdbReaderProvider(),
-				ReadWrite = true,
+                ReadWrite = true,
             };
 
-            if (AdditionalAssemblyResolveFolders.Any())
-                readerParameters.AssemblyResolver = new FolderAssemblyResolver(AdditionalAssemblyResolveFolders);
+            readerParameters.AssemblyResolver = new FolderAssemblyResolver(AdditionalAssemblyResolveFolders
+                .Concat(new string[] { Directory.GetParent(assemblyPath).FullName }).ToList());
 
             UnweavedAssembly = File.ReadAllBytes(assemblyPath);
-			using (var assemblyDefinition = AssemblyDefinition.ReadAssembly(assemblyPath, readerParameters))
-			{
-				var module = assemblyDefinition.MainModule;
-				Execute(module);
+            using (var assemblyDefinition = AssemblyDefinition.ReadAssembly(assemblyPath, readerParameters))
+            {
+                var module = assemblyDefinition.MainModule;
+                Execute(module);
 
-				var writerParameters = new WriterParameters
-				{
-					WriteSymbols = true,
-					SymbolWriterProvider = new PdbWriterProvider()
-				};
-				assemblyDefinition.Write(writerParameters);
-			}
+                var writerParameters = new WriterParameters
+                {
+                    WriteSymbols = true,
+                    SymbolWriterProvider = new PdbWriterProvider()
+                };
+                assemblyDefinition.Write(writerParameters);
+            }
         }
 
         public void AddClassFilter(string classFilter)
@@ -149,10 +151,17 @@ namespace MethodBoundaryAspect.Fody
 
         private void Execute(ModuleDefinition module)
         {
-            var assemblyMethodBoundaryAspects = module.Assembly.CustomAttributes;
+            try
+            {
+                var assemblyMethodBoundaryAspects = module.Assembly.CustomAttributes;
 
-            foreach (var type in module.Types)
-                WeaveType(module, type, assemblyMethodBoundaryAspects);
+                foreach (var type in module.Types)
+                    WeaveType(module, type, assemblyMethodBoundaryAspects);
+            }
+            catch (Exception e)
+            {
+                LogError(e.ToDetailedString());
+            }
         }
 
         private void WeaveType(ModuleDefinition module, TypeDefinition type, Collection<CustomAttribute> assemblyMethodBoundaryAspects)
@@ -206,12 +215,12 @@ namespace MethodBoundaryAspect.Fody
                 .ToList();
 
             if (classLevelAspectInfos.Count != 0)
-                foreach (var baseVirtualMethod in GetPotentiallyOverridableMethods(type))
+                foreach (var baseVirtualMethod in GetPotentiallyOverridableMethods(type, module))
                 {
-                    if (!IsWeavableMethod(baseVirtualMethod, type))
+                    if (!IsWeavableMethod(baseVirtualMethod.Resolve(), type))
                         continue;
 
-                    var @override = new MethodDefinition(baseVirtualMethod.Name, baseVirtualMethod.Attributes, baseVirtualMethod.ReturnType);
+                    var @override = new MethodDefinition(baseVirtualMethod.Name, baseVirtualMethod.Resolve().Attributes, baseVirtualMethod.ReturnType);
 
                     foreach (var p in baseVirtualMethod.GenericParameters)
                         @override.GenericParameters.Add(new GenericParameter(p));
@@ -238,20 +247,22 @@ namespace MethodBoundaryAspect.Fody
                 TotalWeavedTypes++;
         }
 
-        private IEnumerable<MethodDefinition> GetPotentiallyOverridableMethods(TypeReference type)
+        private IEnumerable<MethodReference> GetPotentiallyOverridableMethods(TypeReference type, ModuleDefinition module)
         {
-            for (TypeDefinition typeDef = type.Resolve()?.BaseType?.Resolve(); typeDef != null && typeDef.FullName != typeof(Object).FullName; typeDef = typeDef.BaseType.Resolve())
+            for (TypeDefinition typeDef = type.Resolve()?.BaseType?.Resolve(); typeDef != null && typeDef.FullName != typeof(Object).FullName; typeDef = type.Module.ImportReference(typeDef.BaseType).Resolve())
             {
                 foreach (var method in typeDef.Methods)
                 {
-                    if (method.IsVirtual && !method.IsFinal && !method.HasOverrides)
-                        yield return method.Resolve();
+                    if (method.IsVirtual && !method.IsFinal && !method.IsAbstract && !method.IsStatic && method.IsPublic && !method.HasOverrides)
+                    {
+                        yield return module.ImportReference(method.Resolve());
+                    }
                 }
             }
         }
 
         private bool WeaveMethod(
-            ModuleDefinition module, 
+            ModuleDefinition module,
             MethodDefinition method,
             List<AspectInfo> aspectInfos,
             TypeReference type)
@@ -277,8 +288,8 @@ namespace MethodBoundaryAspect.Fody
                     var overriddenAspectMethods = GetUsedAspectMethods(aspectTypeDefinition);
                     if (overriddenAspectMethods == AspectMethods.None)
                         continue;
-                    
-                    methodWeaver.Weave(method, aspectInfo.AspectAttribute, overriddenAspectMethods, module, type, UnweavedAssembly);
+
+                    methodWeaver.Weave(method, aspectInfo.AspectAttribute, overriddenAspectMethods, module, type, UnweavedAssembly, ReferenceCopyLocalPaths);
                 }
 
                 if (methodWeaver.WeaveCounter == 0)
@@ -336,7 +347,8 @@ namespace MethodBoundaryAspect.Fody
                 if (currentType.FullName == typeof(OnMethodBoundaryAspect).FullName)
                     return true;
 
-                currentType = currentType.Resolve().BaseType;
+                var typeDef = currentType.Resolve();
+                currentType = typeDef.BaseType;
             } while (currentType != null);
 
             return false;

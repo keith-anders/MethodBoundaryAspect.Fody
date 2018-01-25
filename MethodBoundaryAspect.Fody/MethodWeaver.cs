@@ -3,6 +3,7 @@ using Mono.Cecil;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 
@@ -10,6 +11,11 @@ namespace MethodBoundaryAspect.Fody
 {
     internal class MethodWeaver : IDisposable
     {
+        private Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
+        {
+            return AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.FullName == args.Name);
+        }
+
         private NamedInstructionBlockChain _createArgumentsArray;
         private MethodBodyPatcher _methodBodyChanger;
         private bool _finished;
@@ -40,37 +46,84 @@ namespace MethodBoundaryAspect.Fody
             }
         }
 
+        Assembly LoadAssembly(ModuleDefinition moduleDefinition, byte[] assemblyBytes, List<string> referencePaths)
+        {
+            return LoadAssembly(moduleDefinition, assemblyBytes, referencePaths, new HashSet<string>());
+        }
+
+        Assembly LoadAssembly(ModuleDefinition moduleDefinition, byte[] assemblyBytes, List<string> referencePaths, HashSet<string> loaded)
+        {
+            var asm = AppDomain.CurrentDomain.Load(assemblyBytes);
+            foreach (var dependent in asm.GetReferencedAssemblies())
+            {
+                if (loaded.Contains(dependent.FullName))
+                    continue;
+
+                var referencePath = referencePaths.FirstOrDefault(p => new FileInfo(p).Name == dependent.Name + ".dll");
+                loaded.Add(dependent.FullName);
+                if (referencePath == null)
+                    AppDomain.CurrentDomain.Load(dependent);
+                else
+                    LoadAssembly(moduleDefinition, File.ReadAllBytes(referencePath), referencePaths, loaded);
+            }
+            return asm;
+        }
+
+        string ToAssemblyQualifiedTypeName(TypeReference typeRef, ModuleDefinition module)
+        {
+            string typeName = $"{typeRef.Namespace}.{typeRef.Name}";
+            if (typeRef is GenericInstanceType gen)
+            {
+                typeName += "[[";
+                foreach (var p in gen.GenericArguments)
+                    typeName += ToAssemblyQualifiedTypeName(p, module);
+                typeName += "]]";
+            }
+            typeName += ", ";
+            typeName += module.ImportReference(typeRef).Resolve().Module.Assembly.FullName;
+            return typeName;
+        }
+
         public void Weave(
             MethodDefinition method,
             CustomAttribute aspect,
             AspectMethods overriddenAspectMethods,
             ModuleDefinition moduleDefinition,
             TypeReference type,
-            byte[] unweavedAssembly)
+            byte[] unweavedAssembly,
+            List<string> referencePaths)
         {
             if (overriddenAspectMethods == AspectMethods.None)
                 return;
 
             if (overriddenAspectMethods.HasFlag(AspectMethods.CompileTimeValidate))
             {
-                var asm = AppDomain.CurrentDomain.Load(unweavedAssembly);
-                string methodName = method.Name;
-                string[] methodParams = method.Parameters.Select(p => p.ParameterType.FullName).ToArray();
-                string[] ctorParams = aspect.Constructor.Parameters.Select(p => p.ParameterType.FullName).ToArray();
+                ResolveEventHandler h = CurrentDomain_AssemblyResolve;
                 try
                 {
+                    AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
+                    var asm = LoadAssembly(moduleDefinition, unweavedAssembly, referencePaths);
+
+                    string methodName = method.Name;
+                    string[] methodParams = method.Parameters.Select(p => ToAssemblyQualifiedTypeName(p.ParameterType, moduleDefinition)).ToArray();
+                    string[] ctorParams = aspect.Constructor.Parameters.Select(p => p.ParameterType.FullName).ToArray();
+
                     var typeInfo = asm.GetTypes().FirstOrDefault(t => t.FullName == type.FullName);
                     if (typeInfo == null)
                         throw new InvalidOperationException(String.Format("Could not find type '{0}'.", type.FullName));
 
                     Type[] parameters = methodParams.Select(Type.GetType).ToArray();
-                    var methodInfo = typeInfo.GetMethod(methodName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance, null, parameters, new ParameterModifier[0]);
+                    var methodInfo = typeInfo.GetMethod(methodName,
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance,
+                        null,
+                        parameters,
+                        new ParameterModifier[0]);
 
                     Type aspectType = asm.GetTypes().FirstOrDefault(t => t.FullName == aspect.AttributeType.FullName);
                     var ctorInfo = aspectType.GetConstructor(ctorParams.Select(Type.GetType).ToArray());
                     if (ctorInfo == null)
                         throw new InvalidOperationException("Could not find constructor for aspect.");
-                    
+
                     object[] ctorArgs = GetRuntimeAttributeArgs(aspect.ConstructorArguments);
                     var aspectInstance = Activator.CreateInstance(aspectType, ctorArgs) as OnMethodBoundaryAspect;
                     if (aspectInstance == null)
@@ -95,9 +148,9 @@ namespace MethodBoundaryAspect.Fody
                     if (!aspectInstance.CompileTimeValidate(methodInfo))
                         return;
                 }
-                catch (Exception e)
+                finally
                 {
-                    throw new InvalidOperationException("Error while trying to compile-time validate.", e);
+                    AppDomain.CurrentDomain.AssemblyResolve -= h;
                 }
             }
 

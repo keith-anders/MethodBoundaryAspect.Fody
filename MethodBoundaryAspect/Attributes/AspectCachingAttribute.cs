@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace MethodBoundaryAspect.Attributes
+namespace MethodBoundaryAspect.Fody.Attributes
 {
     public enum Caching
     {

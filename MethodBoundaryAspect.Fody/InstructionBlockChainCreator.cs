@@ -1,5 +1,4 @@
-using MethodBoundaryAspect.Attributes;
-using MethodBoundaryAspect.Fody.Ordering;
+using MethodBoundaryAspect.Fody.Attributes;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using System;
@@ -206,11 +205,12 @@ namespace MethodBoundaryAspect.Fody
 
         public NamedInstructionBlockChain SaveReturnValue()
         {
+            var retType = _moduleDefinition.ImportReference(_method.ReturnType);
             if (!_creator.HasReturnValue())
-                return new NamedInstructionBlockChain(null, _method.ReturnType);
+                return new NamedInstructionBlockChain(null, retType);
 
-            var returnValueVariable = _creator.CreateVariable(_method.ReturnType);
-            var block = new NamedInstructionBlockChain(returnValueVariable, _method.ReturnType);
+            var returnValueVariable = _creator.CreateVariable(retType);
+            var block = new NamedInstructionBlockChain(returnValueVariable, retType);
 
             var instructions = _creator.SaveReturnValueFromStack(returnValueVariable);
             block.Add(instructions);

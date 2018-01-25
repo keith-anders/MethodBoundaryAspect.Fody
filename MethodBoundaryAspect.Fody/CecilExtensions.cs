@@ -106,6 +106,7 @@ namespace MethodBoundaryAspect.Fody
 {
     using System;
     using System.Collections.Generic;
+    using System.Text;
     using Mono.Cecil;
     using Mono.Cecil.Cil;
 
@@ -198,6 +199,21 @@ namespace MethodBoundaryAspect.Fody
                 default:
                     return OpCodes.Stelem_Ref;
             }
+        }
+
+        public static string ToDetailedString(this Exception e)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine($"{e.GetType().FullName} - {e.Message}");
+            sb.AppendLine();
+            sb.AppendLine(e.StackTrace);
+
+            if (e.InnerException != null)
+            {
+                sb.AppendLine("---Inner Exception---");
+                sb.AppendLine(e.InnerException.ToDetailedString());
+            }
+            return sb.ToString();
         }
     }
 }

@@ -1,11 +1,7 @@
-using System.Collections.Generic;
-using System.Linq;
-using MethodBoundaryAspect.Attributes;
 using MethodBoundaryAspect.Fody.Attributes;
 using Mono.Cecil;
-using Mono.Cecil.Rocks;
-using Mono.Collections.Generic;
-using Mono.CompilerServices.SymbolWriter;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace MethodBoundaryAspect.Fody.Ordering
 {

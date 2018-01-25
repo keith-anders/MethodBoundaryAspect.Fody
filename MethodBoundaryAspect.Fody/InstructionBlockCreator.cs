@@ -267,7 +267,7 @@ namespace MethodBoundaryAspect.Fody
                 if (IsVoid(methodDefinition.ReturnType))
                     throw new InvalidOperationException("Method has no return value");
                 
-                if (!methodDefinition.ReturnType.IsAssignableTo(returnValue.VariableType))
+                if (!_referenceFinder.Module.ImportReference(methodDefinition.ReturnType).IsAssignableTo(_referenceFinder.Module.ImportReference(returnValue.VariableType)))
                     castReturnValueToCorrectType = _processor.Create(OpCodes.Unbox_Any, returnValue.VariableType);
 
                 assignReturnValueToVariableInstruction = _processor.Create(OpCodes.Stloc, returnValue);
@@ -338,7 +338,7 @@ namespace MethodBoundaryAspect.Fody
             if (parameterType.FullName == typeof(Object).FullName && value is CustomAttributeArgument arg)
             {
                 var valueType = _referenceFinder.GetTypeReference(arg.Value.GetType());
-                if (arg.Value.GetType() == typeof(TypeReference))
+                if (arg.Value is TypeReference)
                     valueType = _referenceFinder.GetTypeReference(typeof(Type));
                 var instructions = LoadValueOnStack(valueType, arg.Value, module);
                 instructions.Add(_processor.Create(OpCodes.Box, valueType));

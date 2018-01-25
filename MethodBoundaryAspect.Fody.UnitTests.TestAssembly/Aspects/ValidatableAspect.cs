@@ -1,5 +1,4 @@
 ﻿using System.Reflection;
-using MethodBoundaryAspect.Attributes;
 using MethodBoundaryAspect.Fody.Attributes;
 
 namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly.Aspects
