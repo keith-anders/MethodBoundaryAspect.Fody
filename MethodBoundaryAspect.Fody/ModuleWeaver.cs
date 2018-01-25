@@ -260,8 +260,58 @@ namespace MethodBoundaryAspect.Fody
                     type);
             }
 
+            var classLevelAspectInfos = assemblyMethodBoundaryAspects
+                .Concat(classMethodBoundaryAspects)
+                .Where(IsMethodBoundaryAspect)
+                .Select(x => new AspectInfo(x))
+                .Where(x => x.ForceOverrides)
+                .ToList();
+
+            if (classLevelAspectInfos.Count != 0)
+                foreach (var baseVirtualMethod in GetPotentiallyOverridableMethods(type, module))
+                {
+                    if (!IsWeavableMethod(baseVirtualMethod.Resolve(), type))
+                        continue;
+
+                    var @override = new MethodDefinition(baseVirtualMethod.Name, baseVirtualMethod.Resolve().Attributes, baseVirtualMethod.ReturnType);
+
+                    foreach (var p in baseVirtualMethod.GenericParameters)
+                        @override.GenericParameters.Add(new GenericParameter(p));
+
+                    foreach (var p in baseVirtualMethod.Parameters)
+                        @override.Parameters.Add(new ParameterDefinition(p.ParameterType));
+
+                    var il = @override.Body.GetILProcessor();
+                    il.Emit(OpCodes.Ldarg_0);
+                    for (int i = 0; i < baseVirtualMethod.Parameters.Count; ++i)
+                        il.Emit(OpCodes.Ldarg, i + 1);
+                    il.Emit(OpCodes.Call, baseVirtualMethod);
+                    il.Emit(OpCodes.Ret);
+
+                    if (WeaveMethod(module, @override, classLevelAspectInfos, type))
+                    {
+                        type.Methods.Add(@override);
+                        @override.Overrides.Add(baseVirtualMethod);
+                        weavedAtLeastOneMethod = true;
+                    }
+                }
+
             if (weavedAtLeastOneMethod)
                 TotalWeavedTypes++;
+        }
+
+        private IEnumerable<MethodReference> GetPotentiallyOverridableMethods(TypeReference type, ModuleDefinition module)
+        {
+            for (TypeDefinition typeDef = type.Resolve()?.BaseType?.Resolve(); typeDef != null && typeDef.FullName != typeof(Object).FullName; typeDef = type.Module.ImportReference(typeDef.BaseType).Resolve())
+            {
+                foreach (var method in typeDef.Methods)
+                {
+                    if (method.IsVirtual && !method.IsFinal && !method.IsAbstract && !method.IsStatic && method.IsPublic && !method.HasOverrides)
+                    {
+                        yield return module.ImportReference(method.Resolve());
+                    }
+                }
+            }
         }
 
         private bool WeaveMethod(

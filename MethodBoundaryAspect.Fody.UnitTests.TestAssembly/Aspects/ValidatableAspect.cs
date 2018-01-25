@@ -3,6 +3,7 @@ using MethodBoundaryAspect.Fody.Attributes;
 
 namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly.Aspects
 {
+    [AspectForceOverrides]
     public class ValidatableAspect : OnMethodBoundaryAspect
     {
         static bool Called = false;
