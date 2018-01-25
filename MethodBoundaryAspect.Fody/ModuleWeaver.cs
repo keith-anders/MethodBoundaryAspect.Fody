@@ -273,7 +273,13 @@ namespace MethodBoundaryAspect.Fody
                     if (!IsWeavableMethod(baseVirtualMethod.Resolve(), type))
                         continue;
 
-                    var @override = new MethodDefinition(baseVirtualMethod.Name, baseVirtualMethod.Resolve().Attributes, baseVirtualMethod.ReturnType);
+                    var @override = new MethodDefinition(baseVirtualMethod.Name, baseVirtualMethod.Resolve().Attributes, baseVirtualMethod.ReturnType)
+                    {
+                        IsNewSlot = false,
+                        IsReuseSlot = true,
+                        ImplAttributes = baseVirtualMethod.Resolve().ImplAttributes,
+                        SemanticsAttributes = baseVirtualMethod.Resolve().SemanticsAttributes
+                    };
 
                     foreach (var p in baseVirtualMethod.GenericParameters)
                         @override.GenericParameters.Add(new GenericParameter(p));
@@ -291,7 +297,6 @@ namespace MethodBoundaryAspect.Fody
                     if (WeaveMethod(module, @override, classLevelAspectInfos, type))
                     {
                         type.Methods.Add(@override);
-                        @override.Overrides.Add(baseVirtualMethod);
                         weavedAtLeastOneMethod = true;
                     }
                 }
@@ -302,11 +307,21 @@ namespace MethodBoundaryAspect.Fody
 
         private IEnumerable<MethodReference> GetPotentiallyOverridableMethods(TypeReference type, ModuleDefinition module)
         {
-            for (TypeDefinition typeDef = type.Resolve()?.BaseType?.Resolve(); typeDef != null && typeDef.FullName != typeof(Object).FullName; typeDef = type.Module.ImportReference(typeDef.BaseType).Resolve())
+            TypeDefinition resolved = type.Resolve();
+            bool IsOverriddenInWeavingType(MethodDefinition def)
+            {
+                return resolved.Methods.Where(m =>
+                    m.Name == def.Name && m.IsReuseSlot &&
+                    m.ReturnType.FullName == def.ReturnType.FullName &&
+                    m.Parameters.Select(p => p.ParameterType.FullName)
+                    .SequenceEqual(def.Parameters.Select(p => p.ParameterType.FullName))).Any();
+            }
+
+            for (TypeDefinition typeDef = resolved?.BaseType?.Resolve(); typeDef != null && typeDef.FullName != typeof(Object).FullName; typeDef = type.Module.ImportReference(typeDef.BaseType).Resolve())
             {
                 foreach (var method in typeDef.Methods)
                 {
-                    if (method.IsVirtual && !method.IsFinal && !method.IsAbstract && !method.IsStatic && method.IsPublic && !method.HasOverrides)
+                    if (method.IsVirtual && !method.IsFinal && !method.IsAbstract && !method.IsStatic && method.IsPublic && method.IsNewSlot && !IsOverriddenInWeavingType(method))
                     {
                         yield return module.ImportReference(method.Resolve());
                     }

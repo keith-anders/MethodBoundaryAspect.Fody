@@ -6,9 +6,14 @@ namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly.Aspects
     [AspectForceOverrides]
     public class ValidatableAspect : OnMethodBoundaryAspect
     {
-        static bool Called = false;
+        static int Called = 0;
 
-        public static bool WasCalled() => Called;
+        public static int TimesCalled()
+        {
+            var tmp = Called;
+            Called = 0;
+            return tmp;
+        }
 
         public override bool CompileTimeValidate(MethodBase method)
         {
@@ -17,7 +22,7 @@ namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly.Aspects
 
         public override void OnEntry(MethodExecutionArgs arg)
         {
-            Called = true;
+            ++Called;
         }
     }
 }

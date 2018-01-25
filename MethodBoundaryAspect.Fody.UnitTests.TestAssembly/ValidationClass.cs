@@ -35,4 +35,20 @@ namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly
         [ValidatedAspect(typeof(float), null, 42)]
         public void Method5() { }
     }
+    
+    public class ValidationClass3
+    {
+        public virtual string StringProperty { get; set; }
+    }
+
+    [ValidatableAspect]
+    public class ValidationClass4 : ValidationClass3
+    {
+        [ValidatableAspect]
+        public override string StringProperty
+        {
+            get => base.StringProperty;
+            set => base.StringProperty = value;
+        }
+    }
 }
