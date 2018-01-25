@@ -45,8 +45,8 @@ namespace MethodBoundaryAspect.Fody.UnitTests.Unified
 
         protected void AssertRunPeVerify()
         {
-            Action action = () => PeVerifier.Verify(Weave.DllPath);
-            action.ShouldNotThrow();
+            void action() => PeVerifier.Verify(Weave.DllPath);
+            ((Action)action).ShouldNotThrow();
         }
 
         public void Dispose()
