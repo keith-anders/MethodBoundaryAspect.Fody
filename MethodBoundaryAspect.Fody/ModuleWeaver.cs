@@ -14,6 +14,8 @@ using Assembly = System.Reflection.Assembly;
 
 namespace MethodBoundaryAspect.Fody
 {
+    public delegate bool Validator(CustomAttribute attribute, TypeReference type, string typeName, int methodToken);
+
     /// <summary>
     /// Used tools: 
     /// - .NET Reflector + Addins "Reflexil" / IL Spy / LinqPad
@@ -34,6 +36,16 @@ namespace MethodBoundaryAspect.Fody
     /// </summary>
     public class ModuleWeaver
     {
+        public static Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
+        {
+            return ((AppDomain)sender).GetAssemblies().FirstOrDefault(a => a.FullName == args.Name);
+        }
+
+        static ModuleWeaver()
+        {
+            AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
+        }
+
         public readonly List<string> AdditionalAssemblyResolveFolders = new List<string>();
 
         private readonly List<string> _classFilters = new List<string>();
@@ -57,15 +69,17 @@ namespace MethodBoundaryAspect.Fody
         public int TotalWeavedTypes { get; private set; }
         public int TotalWeavedMethods { get; private set; }
         public int TotalWeavedPropertyMethods { get; private set; }
-        public byte[] UnweavedAssembly { get; private set; }
 
         public MethodDefinition LastWeavedMethod { get; private set; }
 
         public List<string> ReferenceCopyLocalPaths { get; set; }
+        public string AddinDirectoryPath { get; set; }
+        public string AssemblyFilePath { get; set; }
+        public byte[] AssemblyContents { get; set; }
 
         public void Execute()
         {
-            UnweavedAssembly = File.ReadAllBytes(ModuleDefinition.FileName);
+            AssemblyContents = File.ReadAllBytes(AssemblyFilePath);
             Execute(ModuleDefinition);
         }
 
@@ -97,6 +111,9 @@ namespace MethodBoundaryAspect.Fody
 
         public void Weave(string assemblyPath)
         {
+            AssemblyFilePath = AssemblyFilePath ?? assemblyPath;
+            AssemblyContents = File.ReadAllBytes(AssemblyFilePath);
+
             var readerParameters = new ReaderParameters
             {
                 ReadSymbols = true,
@@ -107,7 +124,6 @@ namespace MethodBoundaryAspect.Fody
             readerParameters.AssemblyResolver = new FolderAssemblyResolver(AdditionalAssemblyResolveFolders
                 .Concat(new string[] { Directory.GetParent(assemblyPath).FullName }).ToList());
 
-            UnweavedAssembly = File.ReadAllBytes(assemblyPath);
             using (var assemblyDefinition = AssemblyDefinition.ReadAssembly(assemblyPath, readerParameters))
             {
                 var module = assemblyDefinition.MainModule;
@@ -151,54 +167,23 @@ namespace MethodBoundaryAspect.Fody
             LogErrorPoint = (m, p) => { };
         }
 
-        private Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
-        {
-            return AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.FullName == args.Name);
-        }
-
-        Assembly LoadAssembly(ModuleDefinition moduleDefinition, byte[] assemblyBytes, List<string> referencePaths)
-        {
-            HashSet<string> loaded = new HashSet<string>();
-            Assembly LoadAssembly(byte[] bytes)
-            {
-                var asm = AppDomain.CurrentDomain.Load(bytes);
-                foreach (var dependent in asm.GetReferencedAssemblies())
-                    if (!loaded.Contains(dependent.FullName))
-                    {
-                        var referencePath = referencePaths.FirstOrDefault(p => new FileInfo(p).Name == dependent.Name + ".dll");
-                        loaded.Add(dependent.FullName);
-                        if (referencePath == null)
-                            AppDomain.CurrentDomain.Load(dependent);
-                        else
-                            LoadAssembly(File.ReadAllBytes(referencePath));
-                    }
-                return asm;
-            }
-
-            return LoadAssembly(assemblyBytes);
-        }
-
-        Assembly UnweavedLoadedAssembly;
-
         private void Execute(ModuleDefinition module)
         {
             try
             {
-                AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
-                var assemblyMethodBoundaryAspects = module.Assembly.CustomAttributes;
-                UnweavedLoadedAssembly = LoadAssembly(module, UnweavedAssembly, ReferenceCopyLocalPaths ?? new List<string>());
-
-                foreach (var type in module.Types)
-                    WeaveType(module, type, assemblyMethodBoundaryAspects);
+                using (var validator = new UnweavedCodeRunner(module,
+                    AddinDirectoryPath, AssemblyContents, ReferenceCopyLocalPaths, LogWarning))
+                {
+                    var assemblyMethodBoundaryAspects = module.Assembly.CustomAttributes;
+                    
+                    foreach (var type in module.Types)
+                        WeaveType(module, type, assemblyMethodBoundaryAspects, validator.CompileTimeValidate);
+                }
             }
             catch (Exception e)
             {
                 LogError(ToDetailedString(e));
                 throw;
-            }
-            finally
-            {
-                AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
             }
         }
 
@@ -217,7 +202,7 @@ namespace MethodBoundaryAspect.Fody
             return sb.ToString();
         }
 
-        private void WeaveType(ModuleDefinition module, TypeDefinition type, Collection<CustomAttribute> assemblyMethodBoundaryAspects)
+        private void WeaveType(ModuleDefinition module, TypeDefinition type, Collection<CustomAttribute> assemblyMethodBoundaryAspects, Validator compileTimeValidate)
         {
             var classMethodBoundaryAspects = type.CustomAttributes;
 
@@ -257,7 +242,10 @@ namespace MethodBoundaryAspect.Fody
                     module,
                     method,
                     aspectInfos,
-                    type);
+                    type,
+                    compileTimeValidate,
+                    type.ToAssemblyQualifiedTypeName(module),
+                    method.MetadataToken.ToInt32());
             }
 
             var classLevelAspectInfos = assemblyMethodBoundaryAspects
@@ -294,7 +282,7 @@ namespace MethodBoundaryAspect.Fody
                     il.Emit(OpCodes.Call, baseVirtualMethod);
                     il.Emit(OpCodes.Ret);
 
-                    if (WeaveMethod(module, @override, classLevelAspectInfos, type))
+                    if (WeaveMethod(module, @override, classLevelAspectInfos, type, compileTimeValidate, baseVirtualMethod.DeclaringType.ToAssemblyQualifiedTypeName(module), baseVirtualMethod.Resolve().MetadataToken.ToInt32()))
                     {
                         type.Methods.Add(@override);
                         weavedAtLeastOneMethod = true;
@@ -333,12 +321,15 @@ namespace MethodBoundaryAspect.Fody
             ModuleDefinition module,
             MethodDefinition method,
             List<AspectInfo> aspectInfos,
-            TypeReference type)
+            TypeReference type,
+            Validator compileTimeValidate,
+            string typeName,
+            int methodToken)
         {
             aspectInfos = AspectOrderer.Order(aspectInfos);
             aspectInfos.Reverse(); // last aspect has to be weaved in first
 
-            using (var methodWeaver = new MethodWeaver(module, type, method, UnweavedLoadedAssembly))
+            using (var methodWeaver = new MethodWeaver(module, type, method))
             {
                 foreach (var aspectInfo in aspectInfos)
                 {
@@ -357,7 +348,7 @@ namespace MethodBoundaryAspect.Fody
                     if (overriddenAspectMethods == AspectMethods.None)
                         continue;
 
-                    methodWeaver.Weave(aspectInfo.AspectAttribute, overriddenAspectMethods);
+                    methodWeaver.Weave(aspectInfo.AspectAttribute, overriddenAspectMethods, typeName, methodToken, compileTimeValidate);
                 }
 
                 if (methodWeaver.WeaveCounter == 0)

@@ -1,4 +1,5 @@
 ﻿using MethodBoundaryAspect.Fody.Attributes;
+using System;
 using System.Reflection;
 
 namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly.Aspects
@@ -6,9 +7,9 @@ namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly.Aspects
     [AspectCaching(Caching.StaticByMethod)]
     public sealed class CachedAspect : OnMethodBoundaryAspect
     {
-        public override bool CompileTimeValidate(MethodBase method)
+        public override bool CompileTimeValidate(Type type, MethodInfo method)
         {
-            return ((MethodInfo)method).ReturnType == typeof(int);
+            return method.ReturnType == typeof(Int32);
         }
 
         int m_enterCalled;
