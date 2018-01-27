@@ -105,6 +105,7 @@ namespace MethodBoundaryAspect.Fody
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
     using System.Text;
     using Mono.Cecil;
     using Mono.Cecil.Cil;
@@ -198,6 +199,16 @@ namespace MethodBoundaryAspect.Fody
                 default:
                     return OpCodes.Stelem_Ref;
             }
+        }
+
+        public static string ToAssemblyQualifiedTypeName(this TypeReference typeRef, ModuleDefinition module)
+        {
+            string typeName = $"{typeRef.Namespace}.{typeRef.Name}";
+            if (typeRef is GenericInstanceType gen)
+                typeName += $"[{String.Join(",", gen.GenericArguments.Select(p => $"[{p.ToAssemblyQualifiedTypeName(module)}]"))}]";
+            typeName += ", ";
+            typeName += module.ImportReference(typeRef).Resolve().Module.Assembly.FullName;
+            return typeName;
         }
     }
 }

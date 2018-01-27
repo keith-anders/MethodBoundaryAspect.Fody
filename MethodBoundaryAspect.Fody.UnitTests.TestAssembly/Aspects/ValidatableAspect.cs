@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System;
+using System.Reflection;
 using MethodBoundaryAspect.Fody.Attributes;
 
 namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly.Aspects
@@ -15,7 +16,7 @@ namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly.Aspects
             return tmp;
         }
 
-        public override bool CompileTimeValidate(MethodBase method)
+        public override bool CompileTimeValidate(Type type, MethodInfo method)
         {
             return !method.Name.Contains("XXX");
         }

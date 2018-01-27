@@ -1,4 +1,5 @@
 ﻿using MethodBoundaryAspect.Fody.Attributes;
+using System;
 using System.Reflection;
 
 namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly.Aspects
@@ -17,7 +18,7 @@ namespace MethodBoundaryAspect.Fody.UnitTests.TestAssembly.Aspects
             Called = true;
         }
 
-        public override bool CompileTimeValidate(MethodBase method)
+        public override bool CompileTimeValidate(Type type, MethodInfo method)
         {
             if (_intercept == true || InterceptProperty == true || InterceptField == true)
                 return true;

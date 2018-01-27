@@ -18,7 +18,7 @@ namespace MethodBoundaryAspect.Fody.Attributes
         {
         }
 
-        public virtual bool CompileTimeValidate(MethodBase method)
+        public virtual bool CompileTimeValidate(Type typeBeingWoven, MethodInfo method)
         {
             return true;
         }
