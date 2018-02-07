@@ -122,16 +122,25 @@ namespace MethodBoundaryAspect.Fody
             if (cachingLevel == Caching.StaticByMethod)
             {
                 var typeDef = type.Resolve();
+                TypeReference concreteType = typeDef;
+                if (typeDef.GenericParameters.Count != 0)
+                {
+                    var gen = new GenericInstanceType(typeDef);
+                    foreach (var param in typeDef.GenericParameters.ToArray())
+                        gen.GenericArguments.Add(param);
+                    concreteType = gen;
+                }
                 int i;
                 string nameFactory(int index) => $"<{_method.Name}>k_aspectField_{index}";
                 bool isNameTaken(int index) => typeDef.Fields.FirstOrDefault(f => f.Name == nameFactory(index)) != null;
                 for (i = 1; isNameTaken(i); ++i) { }
-
-                var field = new FieldDefinition(nameFactory(i), Mono.Cecil.FieldAttributes.Static | Mono.Cecil.FieldAttributes.Private, aspectTypeReference);
+                
+                var fieldDef = new FieldDefinition(nameFactory(i), Mono.Cecil.FieldAttributes.Static | Mono.Cecil.FieldAttributes.Private, aspectTypeReference);
+                var field = new FieldReference(fieldDef.Name, fieldDef.FieldType, concreteType);
                 var staticCtor = _creator.EnsureStaticConstructor(typeDef);
                 var processor = staticCtor.Body.GetILProcessor();
                 var first = staticCtor.Body.Instructions.First();
-
+                
                 var creator = new InstructionBlockCreator(staticCtor, _referenceFinder, type);
                 var aspectStaticVariable = creator.CreateVariable(aspectTypeReference);
                 var newObjectAspectBlock = creator.NewObject(aspectStaticVariable, aspectTypeReference, _moduleDefinition, aspect, _aspectCounter);
@@ -143,7 +152,7 @@ namespace MethodBoundaryAspect.Fody
                 loadAspectFieldBlockChain.Add(new InstructionBlock("LoadAspectField: ",
                     Instruction.Create(OpCodes.Ldsfld, field),
                     Instruction.Create(OpCodes.Stloc, aspectVariable)));
-                type.Resolve().Fields.Add(field);
+                concreteType.Resolve().Fields.Add(fieldDef);
                 return loadAspectFieldBlockChain;
             }
             else

@@ -559,31 +559,41 @@ namespace MethodBoundaryAspect.Fody
             return type.Name == VoidType;
         }
 
-        public FieldDefinition StoreMethodInfoInStaticField(MethodReference method)
+        public FieldReference StoreMethodInfoInStaticField(MethodReference method)
         {
             var typeDef = _typeBeingWoven.Resolve();
             int i;
             for (i = 1; typeDef.Fields.FirstOrDefault(f => f.Name == $"<{method.Name}>k_methodField_{i}") != null; ++i)
             { }
+            TypeReference concreteType = typeDef;
 
-            var field = new FieldDefinition($"<{method.Name}>k_methodField_{i}", FieldAttributes.Static | FieldAttributes.Private,
+            if (concreteType.GenericParameters.Count != 0)
+            {
+                var gen = new GenericInstanceType(typeDef);
+                foreach (var param in typeDef.GenericParameters.ToArray())
+                    gen.GenericArguments.Add(param);
+                concreteType = gen;
+            }
+            
+            var fieldDef = new FieldDefinition($"<{method.Name}>k_methodField_{i}", FieldAttributes.Static | FieldAttributes.Private,
                 _referenceFinder.GetTypeReference(typeof(System.Reflection.MethodInfo)));
+            var field = new FieldReference(fieldDef.Name, fieldDef.FieldType, concreteType);
 
             var staticCtor = EnsureStaticConstructor(typeDef);
 
             var processor = staticCtor.Body.GetILProcessor();
             var first = staticCtor.Body.Instructions.First();
-            
+
             var getMethodFromHandle = _referenceFinder.GetMethodReference(typeof(System.Reflection.MethodBase), md => md.Name == "GetMethodFromHandle" && md.Parameters.Count == 2);
             processor.InsertBefore(first, Instruction.Create(OpCodes.Ldtoken, method));
-            processor.InsertBefore(first, Instruction.Create(OpCodes.Ldtoken, _typeBeingWoven));
+            processor.InsertBefore(first, Instruction.Create(OpCodes.Ldtoken, concreteType));
             processor.InsertBefore(first, Instruction.Create(OpCodes.Call, getMethodFromHandle));
             processor.InsertBefore(first, Instruction.Create(OpCodes.Castclass, _referenceFinder.GetTypeReference(typeof(System.Reflection.MethodInfo))));
             processor.InsertBefore(first, Instruction.Create(OpCodes.Stsfld, field));
 
-            typeDef.Fields.Add(field);
+            concreteType.Resolve().Fields.Add(fieldDef);
 
-            return field.Resolve();
+            return field;
         }
 
         public MethodDefinition EnsureStaticConstructor(TypeDefinition type)
